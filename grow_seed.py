@@ -61,14 +61,15 @@ def pack(image):
 def apfs_view(devs):
     """diskutil's APFS tree as a plain dict of the numbers we care about, only for our own disks.
 
-    hdiutil gives the whole image one node (/dev/disk7) but the APFS container inside it a second,
-    synthesized node (/dev/disk8), and diskutil reports THAT as the PhysicalStore - so filter on every
-    device the attach produced, not just the first."""
+    hdiutil prints /dev/diskN but diskutil's plist stores the bare diskN, and the APFS container inside
+    an attached image gets its own synthesized node (disk7 is the whole image, disk8 is the container),
+    so compare on the stripped names over every node the attach produced."""
+    wanted = {d.replace("/dev/", "") for d in devs}
     out = sh("diskutil", "apfs", "list", "-plist")
     tree = plistlib.loads(out.encode())
     containers = []
     for c in tree.get("AllAPFSContainers", tree.get("Containers", [])):
-        if c.get("PhysicalStore") not in devs:
+        if str(c.get("PhysicalStore", "")).replace("/dev/", "") not in wanted:
             continue
         info = {"container": c.get("Identifier"), "store": c.get("PhysicalStore"),
                 "size": c.get("SizeTotal"), "free": c.get("SizeFree"),
@@ -124,8 +125,19 @@ def main():
             f.write(data)
     print(f"expanded -> {raw} ({raw.stat().st_size} bytes, sparse)")
 
+    def sb_slots(image):
+        """Every u64 slot of the container superblock page that is non-zero, keyed by file offset.
+
+        Used only as a before/after diff so a resize is judged by which fields actually moved, instead
+        of by offsets guessed from a header file."""
+        base = 0x20
+        return {base + o: int.from_bytes(image[base + o:base + o + 8], "little")
+                for o in range(0, 512, 8)
+                if any(image[base + o:base + o + 8])}
+
     devs = attach(raw)
     print(f"attached as {' '.join(devs)}")
+    before_slots = sb_slots(raw.read_bytes()[:0x300])
     try:
         print("\n=== BEFORE ===")
         before = apfs_view(devs)
@@ -146,10 +158,16 @@ def main():
             print(json.dumps(apfs_view(devs), indent=2))
         sh("hdiutil", "detach", devs[0])
     except SystemExit:
-        sh("hdiutil", "detach", dev, check=False)
+        sh("hdiutil", "detach", devs[0], check=False)
         raise
 
     grown = raw.read_bytes()
+    if not a.readonly:
+        after_slots = sb_slots(grown[:0x300])
+        moved = {hex(k): (before_slots.get(k), after_slots.get(k))
+                 for k in set(before_slots) | set(after_slots)
+                 if before_slots.get(k) != after_slots.get(k)}
+        print(f"\nsuperblock fields changed by the resize: {json.dumps(moved, indent=2)}")
     out = pack(grown)
     pathlib.Path(a.dst).parent.mkdir(parents=True, exist_ok=True)
     pathlib.Path(a.dst).write_bytes(out)
