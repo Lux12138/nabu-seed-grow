@@ -59,21 +59,41 @@ def pack(image):
 
 
 def apfs_view(dev):
-    """diskutil's APFS tree as a plain dict of the numbers we care about, plus the container id."""
-    out = sh("diskutil", "apfs", "list", "-plist", dev)
+    """diskutil's APFS tree as a plain dict of the numbers we care about, only for our own disk."""
+    out = sh("diskutil", "apfs", "list", "-plist")
     tree = plistlib.loads(out.encode())
     containers = []
     for c in tree.get("AllAPFSContainers", tree.get("Containers", [])):
+        if dev and c.get("PhysicalStore") != dev:
+            continue
         info = {"container": c.get("Identifier"), "store": c.get("PhysicalStore"),
                 "size": c.get("SizeTotal"), "free": c.get("SizeFree"),
                 "reserved": c.get("SizeReserved"), "used": c.get("SizeUsed")}
         info["volumes"] = [{"name": v.get("VolumeName"), "uuid": v.get("UUID"),
                             "used": v.get("VolumeUsedBytes"),
                             "quota": v.get("VolumeQuota"),
-                            "reserve": v.get("VolumeReserveBytes")}
+                            "reserve": v.get("VolumeReservedBytes")}
                            for v in c.get("Volumes", [])]
         containers.append(info)
     return containers
+
+
+def attach(image):
+    """/dev/diskN for the whole disk image. hdiutil prints one line per slice, and the trailing
+    column is a content hint ('41504653-0000-11AA-…' is literally the ASCII for APFS), so the
+    device node has to come off the front of the line, not the end of the output."""
+    out = sh("hdiutil", "attach", "-nomount", str(image))
+    whole = None
+    for line in out.splitlines():
+        cols = line.split()
+        if not cols or not cols[0].startswith("/dev/disk"):
+            continue
+        print("   attach:", line.strip())
+        if whole is None:
+            whole = cols[0]
+    if not whole:
+        sys.exit(f"hdiutil attach printed no device node:\n{out}")
+    return whole
 
 
 def main():
@@ -101,11 +121,16 @@ def main():
             f.write(data)
     print(f"expanded -> {raw} ({raw.stat().st_size} bytes, sparse)")
 
-    dev = sh("hdiutil", "attach", "-nomount", str(raw)).strip().split()[-1]
+    dev = attach(raw)
     print(f"attached as {dev}")
     try:
         print("\n=== BEFORE ===")
         before = apfs_view(dev)
+        if not before:
+            # Still give the human something to read rather than dying on a parsing detail.
+            print("plist view found no container; raw diskutil output follows")
+            print(sh("diskutil", "apfs", "list", dev, check=False))
+            sys.exit("no APFS container reported for " + dev)
         print(json.dumps(before, indent=2))
         if not a.readonly:
             store = before[0]["container"]
