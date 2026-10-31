@@ -59,28 +59,47 @@ def pack(image):
 
 
 def apfs_view(devs):
-    """diskutil's APFS tree as a plain dict of the numbers we care about, only for our own disks.
+    """diskutil's APFS summary, parsed from the text listing.
 
-    hdiutil prints /dev/diskN but diskutil's plist stores the bare diskN, and the APFS container inside
-    an attached image gets its own synthesized node (disk7 is the whole image, disk8 is the container),
-    so compare on the stripped names over every node the attach produced."""
+    The -plist form was tried first and is not worth the guessing: its container key/PhysicalStore
+    spelling did not match on a runner, while the human listing is stable and already carries every
+    number we need. hdiutil also synthesizes a second node for the container inside an attached image
+    (disk7 = whole image, disk8 = container), and diskutil names stores without the /dev/ prefix, so
+    match on the stripped set of everything the attach produced."""
     wanted = {d.replace("/dev/", "") for d in devs}
-    out = sh("diskutil", "apfs", "list", "-plist")
-    tree = plistlib.loads(out.encode())
-    containers = []
-    for c in tree.get("AllAPFSContainers", tree.get("Containers", [])):
-        if str(c.get("PhysicalStore", "")).replace("/dev/", "") not in wanted:
+    text = sh("diskutil", "apfs", "list")
+    return parse_apfs_list(text, wanted)
+
+
+def num(pat, where):
+    m = re.search(pat, where)
+    return int(m.group(1)) if m else None
+
+
+def parse_apfs_list(text, wanted):
+    """Split diskutil's listing into per-container facts, keeping only containers on our own disks."""
+    blocks = []
+    for chunk in text.split("Container disk")[1:]:
+        name = chunk.split()[0]
+        head = chunk.split("+-> Volume")[0]
+        store = re.search(r"Physical Store\s+(disk\S+)", head)
+        if not store or store.group(1) not in wanted:
             continue
-        info = {"container": c.get("Identifier"), "store": c.get("PhysicalStore"),
-                "size": c.get("SizeTotal"), "free": c.get("SizeFree"),
-                "reserved": c.get("SizeReserved"), "used": c.get("SizeUsed")}
-        info["volumes"] = [{"name": v.get("VolumeName"), "uuid": v.get("UUID"),
-                            "used": v.get("VolumeUsedBytes"),
-                            "quota": v.get("VolumeQuota"),
-                            "reserve": v.get("VolumeReservedBytes")}
-                           for v in c.get("Volumes", [])]
-        containers.append(info)
-    return containers
+        volumes = []
+        for v in re.split(r"\+-> Volume ", chunk)[1:]:
+            uuid = re.search(r"[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}", v)
+            nm = re.search(r"Name:\s+(.+?)\s+\(Case", v)
+            volumes.append({"device": v.split()[0], "uuid": uuid.group(0) if uuid else None,
+                            "name": nm.group(1) if nm else None,
+                            "consumed": num(r"Capacity Consumed:\s+(\d+) B", v)})
+        blocks.append({"container": "disk" + name, "store": store.group(1),
+                       "ceiling": num(r"Size \(Capacity Ceiling\):\s+(\d+) B", head),
+                       "in_use": num(r"Capacity In Use By Volumes:\s+(\d+) B", head),
+                       "not_allocated": num(r"Capacity Not Allocated:\s+(\d+) B", head),
+                       "store_size": num(r"Physical Store Disk:\s+disk\S+\s+.?\s*Size:\s+(\d+) B", head)
+                       or num(r"Size:\s+(\d+) B", head),
+                       "volumes": volumes})
+    return blocks
 
 
 def attach(image):

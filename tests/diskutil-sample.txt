@@ -1,0 +1,21 @@
++-- Container disk8 FE63FD72-1288-4C05-93FC-DF9501635F89
+    ====================================================
+    APFS Container Reference:     disk8
+    Size (Capacity Ceiling):      268435456 B (268.4 MB)
+    Capacity In Use By Volumes:   1531904 B (1.5 MB) (0.6% used)
+    Capacity Not Allocated:       266903552 B (266.9 MB) (99.4% free)
+    |
+    +-< Physical Store disk7 (No UUID)
+    |   ------------------------------
+    |   APFS Physical Store Disk:   disk7
+    |   Size:                       1073741824 B (1.1 GB)
+    |
+    +-> Volume disk8s1 5A1B2C3D-4E5F-6071-8293-A4B5C6D7E8F9
+        ---------------------------------------------------
+        APFS Volume Disk (Role):   disk8s1 (No specific role)
+        Name:                      Data (Case-insensitive)
+        Mount Point:               Not Mounted
+        Capacity Consumed:         20480 B (20.5 KB)
+        Sealed:                    No
+        FileVault:                 No
+
