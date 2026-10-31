@@ -11,7 +11,7 @@ usage: grow_seed.py IN.dbr OUT.dbr --gib 1 [--readonly]
 import argparse
 import json
 import pathlib
-import plistlib
+import re
 import struct
 import subprocess
 import sys
