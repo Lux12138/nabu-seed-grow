@@ -1,0 +1,70 @@
+name: grow-data-seed
+# Only this step needs macOS: growing an APFS container requires diskutil. Input and output are the
+# packed DBRDISK1 form (~74 KB), so no large-file storage is involved.
+on:
+  workflow_dispatch:
+    inputs:
+      size_gib:
+        description: "GiB to grow to. Keep below 2: above 2 GiB the RAM block needs a persistent store."
+        required: true
+        default: "1"
+        type: string
+      mode:
+        description: "inspect = only report what the shipped container holds; grow = resize and repack"
+        required: true
+        default: "grow"
+        type: choice
+        options:
+          - inspect
+          - grow
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: expand, read, grow, repack
+        run: |
+          mkdir -p out
+          if [ "${{ inputs.mode }}" = inspect ]; then
+            python3 grow_seed.py seed/seed-data-256m.dbrdisk out/unchanged.dbr --gib "${{ inputs.size_gib }}" --readonly
+          else
+            python3 grow_seed.py seed/seed-data-256m.dbrdisk out/seed-grow.dbr --gib "${{ inputs.size_gib }}"
+          fi
+      - name: hashes
+        run: |
+          ls -l seed out
+          shasum -a 256 seed/*.dbrdisk out/*.dbr
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seed-${{ inputs.mode }}-${{ inputs.size_gib }}gib
+          path: out/
+
+  verify:
+    # Re-open the result with the same reader the board-side gate uses, so a bad grow is caught here
+    # instead of costing a flash round.
+    needs: mac
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: seed-${{ inputs.mode }}-${{ inputs.size_gib }}gib
+          path: out
+      - name: install the official APFS reader
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apfsprogs
+      - name: unpack and identify
+        run: python3 verify_seed.py out/*.dbr seed/*.dbrdisk
+      - name: ask libfsapfs to read the grown container
+        run: |
+          python3 - <<'PY'
+          import glob, pathlib, struct
+          for p in sorted(glob.glob("out/*.dbr")):
+              blob = pathlib.Path(p).read_bytes()
+              count = struct.unpack_from("<8sIIQQ", blob, 0)[4]
+              pathlib.Path("/tmp/img.img").write_bytes(blob[32 + 16 * count:])
+              print(p, "->", "/tmp/img.img")
+          PY
+          fsapfsinfo /tmp/img.img
