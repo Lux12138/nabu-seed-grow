@@ -58,13 +58,17 @@ def pack(image):
     return head + b"".join(d for _o, d in spans)
 
 
-def apfs_view(dev):
-    """diskutil's APFS tree as a plain dict of the numbers we care about, only for our own disk."""
+def apfs_view(devs):
+    """diskutil's APFS tree as a plain dict of the numbers we care about, only for our own disks.
+
+    hdiutil gives the whole image one node (/dev/disk7) but the APFS container inside it a second,
+    synthesized node (/dev/disk8), and diskutil reports THAT as the PhysicalStore - so filter on every
+    device the attach produced, not just the first."""
     out = sh("diskutil", "apfs", "list", "-plist")
     tree = plistlib.loads(out.encode())
     containers = []
     for c in tree.get("AllAPFSContainers", tree.get("Containers", [])):
-        if dev and c.get("PhysicalStore") != dev:
+        if c.get("PhysicalStore") not in devs:
             continue
         info = {"container": c.get("Identifier"), "store": c.get("PhysicalStore"),
                 "size": c.get("SizeTotal"), "free": c.get("SizeFree"),
@@ -83,17 +87,16 @@ def attach(image):
     column is a content hint ('41504653-0000-11AA-…' is literally the ASCII for APFS), so the
     device node has to come off the front of the line, not the end of the output."""
     out = sh("hdiutil", "attach", "-nomount", str(image))
-    whole = None
+    devs = []
     for line in out.splitlines():
         cols = line.split()
         if not cols or not cols[0].startswith("/dev/disk"):
             continue
         print("   attach:", line.strip())
-        if whole is None:
-            whole = cols[0]
-    if not whole:
+        devs.append(cols[0])
+    if not devs:
         sys.exit(f"hdiutil attach printed no device node:\n{out}")
-    return whole
+    return devs
 
 
 def main():
@@ -121,16 +124,17 @@ def main():
             f.write(data)
     print(f"expanded -> {raw} ({raw.stat().st_size} bytes, sparse)")
 
-    dev = attach(raw)
-    print(f"attached as {dev}")
+    devs = attach(raw)
+    print(f"attached as {' '.join(devs)}")
     try:
         print("\n=== BEFORE ===")
-        before = apfs_view(dev)
+        before = apfs_view(devs)
         if not before:
             # Still give the human something to read rather than dying on a parsing detail.
             print("plist view found no container; raw diskutil output follows")
-            print(sh("diskutil", "apfs", "list", dev, check=False))
-            sys.exit("no APFS container reported for " + dev)
+            for d in devs:
+                print(sh("diskutil", "apfs", "list", d, check=False))
+            sys.exit("no APFS container reported for " + " ".join(devs))
         print(json.dumps(before, indent=2))
         if not a.readonly:
             store = before[0]["container"]
@@ -139,8 +143,8 @@ def main():
             print(f"\nresizeContainer {store} -> {target} bytes")
             print(sh("diskutil", "apfs", "resizeContainer", store, f"{target}B"))
             print("\n=== AFTER ===")
-            print(json.dumps(apfs_view(dev), indent=2))
-        sh("hdiutil", "detach", dev)
+            print(json.dumps(apfs_view(devs), indent=2))
+        sh("hdiutil", "detach", devs[0])
     except SystemExit:
         sh("hdiutil", "detach", dev, check=False)
         raise
