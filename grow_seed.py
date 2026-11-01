@@ -119,12 +119,16 @@ def attach(image):
     return devs
 
 
-def inject_disable_watchdogd(mount):
+def inject_disable_watchdogd(mount, root_own):
     """Write launchd's own opt-out for one daemon, byte-for-byte the shape the official
     kits/sheng/BootWatchdogPolicy.c writes when the hardware watchdog backend is missing.
 
     Done here instead of in the kernel because the Data volume is an image we build: this also proves
     we can place *files* on it, which mkdir-only skeleton steps cannot do (prng.seed and friends need it).
+
+    root_own must be True for launchd to honour the file: with uid 501 ownership the same bytes were
+    ignored on the board (l299 still crashed watchdogd 3x) while the kernel writer, which runs as
+    root, worked (l300/l301: 0 crashes).
     """
     import plistlib
 
@@ -133,8 +137,31 @@ def inject_disable_watchdogd(mount):
     plist = target / "disabled.plist"
     plist.write_bytes(plistlib.dumps({"com.apple.watchdogd": True}))
     (target / "disabled.migrated").write_bytes(b"")
-    print(f"injected {plist} ({plist.stat().st_size} B) + disabled.migrated (0 B)")
-    return plistlib.dumps({"com.apple.watchdogd": True})
+    if root_own:
+        # chown the whole chain, not just the file: the two hypotheses (launchd rejects a file it
+        # does not own vs a directory chain it does not own) are separated by this round.
+        sh("sudo", "chown", "-R", "root:wheel", str(mount / "db"))
+        sh("sudo", "chmod", "755", str(mount / "db"), str(target))
+        sh("sudo", "chmod", "644", str(plist), str(target / "disabled.migrated"))
+    print(f"injected {plist} ({plist.stat().st_size} B) + disabled.migrated (0 B), root_own={root_own}")
+    return plist
+
+
+def inject_factorydata_upper(mount):
+    """BindFS refuses with 'lookup of /private/var/hardware/FactoryData/System/Library/Caches/
+    com.apple.factorydata failed error: 2' - the upper directory tree simply does not exist on our
+    Data volume, so the System-volume overlay cannot be built. Creating it is the whole experiment:
+    if that error becomes a mount success, we gain a writable view over /System and can fix job
+    plists (SpringBoard stderr) without any new kernel capability."""
+    rel = "var/hardware/FactoryData/System/Library/Caches/com.apple.factorydata"
+    target = mount / rel
+    target.mkdir(parents=True, exist_ok=True)
+    sh("sudo", "chown", "-R", "root:wheel", str(mount / "var"))
+    sh("sudo", "chmod", "755", *(str(p) for p in [mount / "var"] +
+                                 [mount / "/".join(rel.split("/")[:i]) for i in range(2, len(rel.split("/")))]))
+    print(f"created BindFS upper tree: /{rel}")
+    return target
+
 
 
 def main():
@@ -145,6 +172,10 @@ def main():
     ap.add_argument("--readonly", action="store_true")
     ap.add_argument("--disable-watchdogd", action="store_true",
                     help="mount the Data volume and write launchd's disabled.plist for com.apple.watchdogd")
+    ap.add_argument("--root-own", action="store_true",
+                    help="chown the injected launchd chain to root:wheel; launchd ignored a uid-501 copy on board")
+    ap.add_argument("--factorydata-upper", action="store_true",
+                    help="create the /var/hardware/FactoryData/... tree that BindFS reports as missing (error 2)")
     a = ap.parse_args()
 
     blob = pathlib.Path(a.src).read_bytes()
@@ -196,7 +227,7 @@ def main():
             print("\n=== AFTER ===")
             after = apfs_view(devs)
             print(json.dumps(after, indent=2))
-            if a.disable_watchdogd:
+            if a.disable_watchdogd or a.factorydata_upper:
                 vols = [v for block in after for v in block["volumes"]]
                 if not vols:
                     sys.exit("the container reports no volumes; cannot inject")
@@ -204,7 +235,11 @@ def main():
                 print(f"\nmounting volume {data['device']} (name={data['name']} "
                       f"uuid={data['uuid']} consumed={data['consumed']} B)")
                 print(sh("diskutil", "mount", data["device"]))
-                inject_disable_watchdogd(pathlib.Path("/Volumes") / (data["name"] or "Data"))
+                mount = pathlib.Path("/Volumes") / (data["name"] or "Data")
+                if a.disable_watchdogd:
+                    inject_disable_watchdogd(mount, a.root_own)
+                if a.factorydata_upper:
+                    inject_factorydata_upper(mount)
                 print(sh("diskutil", "unmount", data["device"]))
         sh("hdiutil", "detach", devs[0])
     except SystemExit:
@@ -218,13 +253,20 @@ def main():
                  for k in set(before_slots) | set(after_slots)
                  if before_slots.get(k) != after_slots.get(k)}
         print(f"\nsuperblock fields changed by the resize: {json.dumps(moved, indent=2)}")
+    probes = []
     if a.disable_watchdogd:
-        # The catalog records the names as plain ASCII and the bplist stores its keys the same way, so
-        # this is a real read-back of what landed on the volume, not a trust-the-tool claim.
-        for probe in [b"disabled.plist", b"disabled.migrated", b"com.apple.watchdogd", b"bplist00"]:
-            print(f"  in-image probe {probe!r}: {grown.count(probe)} hit(s)")
-        if not grown.count(b"com.apple.watchdogd"):
-            sys.exit("INJECT FAILED: the watchdogd key is not in the image; the volume write did not land")
+        probes += [b"disabled.plist", b"disabled.migrated", b"com.apple.watchdogd"]
+    if a.factorydata_upper:
+        probes += [b"factorydata", b"FactoryData", b"hardware"]
+    for probe in probes:
+        # the APFS catalog keeps names as plain ASCII, so this is a real read-back of what landed on
+        # the volume rather than a trust-the-tool claim. plistlib writes XML by default, so bplist00
+        # is deliberately not probed.
+        print(f"  in-image probe {probe!r}: {grown.count(probe)} hit(s)")
+    if a.disable_watchdogd and not grown.count(b"com.apple.watchdogd"):
+        sys.exit("INJECT FAILED: the watchdogd key is not in the image; the volume write did not land")
+    if a.factorydata_upper and not grown.count(b"factorydata"):
+        sys.exit("INJECT FAILED: the BindFS upper tree is not in the image; the mkdir did not land")
     out = pack(grown)
     pathlib.Path(a.dst).parent.mkdir(parents=True, exist_ok=True)
     pathlib.Path(a.dst).write_bytes(out)
