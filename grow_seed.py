@@ -119,12 +119,32 @@ def attach(image):
     return devs
 
 
+def inject_disable_watchdogd(mount):
+    """Write launchd's own opt-out for one daemon, byte-for-byte the shape the official
+    kits/sheng/BootWatchdogPolicy.c writes when the hardware watchdog backend is missing.
+
+    Done here instead of in the kernel because the Data volume is an image we build: this also proves
+    we can place *files* on it, which mkdir-only skeleton steps cannot do (prng.seed and friends need it).
+    """
+    import plistlib
+
+    target = mount / "db" / "com.apple.xpc.launchd"
+    target.mkdir(parents=True, exist_ok=True)
+    plist = target / "disabled.plist"
+    plist.write_bytes(plistlib.dumps({"com.apple.watchdogd": True}))
+    (target / "disabled.migrated").write_bytes(b"")
+    print(f"injected {plist} ({plist.stat().st_size} B) + disabled.migrated (0 B)")
+    return plistlib.dumps({"com.apple.watchdogd": True})
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("src")
     ap.add_argument("dst")
     ap.add_argument("--gib", type=float, default=1.0)
     ap.add_argument("--readonly", action="store_true")
+    ap.add_argument("--disable-watchdogd", action="store_true",
+                    help="mount the Data volume and write launchd's disabled.plist for com.apple.watchdogd")
     a = ap.parse_args()
 
     blob = pathlib.Path(a.src).read_bytes()
@@ -174,7 +194,18 @@ def main():
             print(f"\nresizeContainer {store} -> {target} bytes")
             print(sh("diskutil", "apfs", "resizeContainer", store, f"{target}B"))
             print("\n=== AFTER ===")
-            print(json.dumps(apfs_view(devs), indent=2))
+            after = apfs_view(devs)
+            print(json.dumps(after, indent=2))
+            if a.disable_watchdogd:
+                vols = [v for block in after for v in block["volumes"]]
+                if not vols:
+                    sys.exit("the container reports no volumes; cannot inject")
+                data = next((v for v in vols if v["name"] == "Data"), vols[0])
+                print(f"\nmounting volume {data['device']} (name={data['name']} "
+                      f"uuid={data['uuid']} consumed={data['consumed']} B)")
+                print(sh("diskutil", "mount", data["device"]))
+                inject_disable_watchdogd(pathlib.Path("/Volumes") / (data["name"] or "Data"))
+                print(sh("diskutil", "unmount", data["device"]))
         sh("hdiutil", "detach", devs[0])
     except SystemExit:
         sh("hdiutil", "detach", devs[0], check=False)
@@ -187,6 +218,13 @@ def main():
                  for k in set(before_slots) | set(after_slots)
                  if before_slots.get(k) != after_slots.get(k)}
         print(f"\nsuperblock fields changed by the resize: {json.dumps(moved, indent=2)}")
+    if a.disable_watchdogd:
+        # The catalog records the names as plain ASCII and the bplist stores its keys the same way, so
+        # this is a real read-back of what landed on the volume, not a trust-the-tool claim.
+        for probe in [b"disabled.plist", b"disabled.migrated", b"com.apple.watchdogd", b"bplist00"]:
+            print(f"  in-image probe {probe!r}: {grown.count(probe)} hit(s)")
+        if not grown.count(b"com.apple.watchdogd"):
+            sys.exit("INJECT FAILED: the watchdogd key is not in the image; the volume write did not land")
     out = pack(grown)
     pathlib.Path(a.dst).parent.mkdir(parents=True, exist_ok=True)
     pathlib.Path(a.dst).write_bytes(out)

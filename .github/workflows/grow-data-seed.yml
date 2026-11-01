@@ -17,19 +17,31 @@ on:
         options:
           - inspect
           - grow
+      disable_watchdogd:
+        description: "also mount the Data volume and write launchd disabled.plist for com.apple.watchdogd"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 jobs:
   mac:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: decide the flags
+        id: flags
+        run: echo "inject=$([ '${{ inputs.disable_watchdogd }}' = 'true' ] && echo --disable-watchdogd || true)" >> "$GITHUB_OUTPUT"
       - name: expand, read, grow, repack
         run: |
           mkdir -p out
           if [ "${{ inputs.mode }}" = inspect ]; then
             python3 grow_seed.py seed/seed-data-256m.dbrdisk out/unchanged.dbr --gib "${{ inputs.size_gib }}" --readonly
           else
-            python3 grow_seed.py seed/seed-data-256m.dbrdisk out/seed-grow.dbr --gib "${{ inputs.size_gib }}"
+            echo "grow flags: ${{ steps.flags.outputs.inject }}"
+            python3 grow_seed.py seed/seed-data-256m.dbrdisk out/seed-grow.dbr --gib "${{ inputs.size_gib }}" ${{ steps.flags.outputs.inject }}
           fi
       - name: hashes
         run: |
