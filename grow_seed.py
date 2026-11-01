@@ -171,17 +171,22 @@ def inject_factorydata_upper(mount):
 
 
 
-def inject_privvar_dirs(mount, manifest_path):
+def inject_privvar_dirs(mount, manifest_path, keybags=False):
     """Build the real /private/var directory tree on the Data volume from a '<mode> ./path' manifest.
 
-    l303 got as far as keybagd and stopped on a plain ENOENT: 'Could not open
-    /private/var/keybags/systembag.kb: No such file or directory' - the keybags directory itself is
-    absent, and so are most of the rest of the tree (our kernel skeleton only makes 33 dirs, and
-    d46a's 85-line manifest does not list keybags either). Directories only, no file contents.
+    Directories only, no file contents. What this actually bought on board (l309) was two offending lines
+    gone - the BindFS hardware/FactoryData lookup and init_featureflags' /Library/Preferences/FeatureFlags -
+    both of which the kernel skeleton does not create (verified: the 34-entry array in patches/xnu/
+    0009-nabu-data-mkdir.patch has hardware/Keychains/wireless 0 times).
+
+    keybags is OFF by default on purpose. The kernel skeleton already makes keybags and keybags/backup, and
+    the IPSW tree never had them (MKB creates them on first boot). Building them here too would give the
+    conclusion "the directory exists" two independent sources, which is exactly what d46a warned about. Pass
+    keybags=True only if you are deliberately testing seed-side ownership of that directory (real device:
+    0700 root:wheel).
 
     Ownership follows the manifest's own intent: the ./mobile subtree belongs to the mobile user
-    (uid 501 on iOS), everything else is root:wheel, because launchd ignored a uid-501 disabled.plist
-    on board while the root-owned one worked.
+    (uid 501 on iOS), everything else is root:wheel.
     """
     entries = []
     for raw_line in pathlib.Path(manifest_path).read_text(errors="replace").splitlines():
@@ -203,15 +208,16 @@ def inject_privvar_dirs(mount, manifest_path):
         sh("sudo", "chmod", mode, str(target))
         made += 1
     print(f"parsed {len(entries)} manifest entries, {made} created at their recorded modes")
-    kb = mount / "keybags"
-    kb.mkdir(parents=True, exist_ok=True)
-    sh("sudo", "chmod", "700", str(kb))
-    made += 1
+    if keybags:
+        kb = mount / "keybags"
+        kb.mkdir(parents=True, exist_ok=True)
+        sh("sudo", "chmod", "700", str(kb))
+        made += 1
     sh("sudo", "chown", "-R", "root:wheel", str(mount))
     for p in mount.glob("mobile"):
         sh("sudo", "chown", "-R", "501:staff", str(p))
     print(f"created {made} /private/var directories from {manifest_path} "
-          f"(incl. keybags 700), mobile subtree -> 501:staff")
+          f"(keybags={keybags}), mobile subtree -> 501:staff")
     return made
 
 
@@ -227,8 +233,11 @@ def main():
                     help="chown the injected launchd chain to root:wheel; launchd ignored a uid-501 copy on board")
     ap.add_argument("--factorydata-upper", action="store_true",
                     help="create the /var/hardware/FactoryData/... tree that BindFS reports as missing (error 2)")
+    ap.add_argument("--privvar-keybags", action="store_true",
+                    help="also create keybags 0700 (off by default: the kernel skeleton already makes it, and "
+                         "dual sources would make 'the directory exists' unfalsifiable)")
     ap.add_argument("--privvar-manifest", default=None,
-                    help="path to a '<mode> ./path' manifest of /private/var directories to create, plus keybags")
+                    help="path to a '<mode> ./path' manifest of /private/var directories to create")
     a = ap.parse_args()
 
     blob = pathlib.Path(a.src).read_bytes()
@@ -294,7 +303,7 @@ def main():
                 if a.factorydata_upper:
                     inject_factorydata_upper(mount)
                 if a.privvar_manifest:
-                    inject_privvar_dirs(mount, a.privvar_manifest)
+                    inject_privvar_dirs(mount, a.privvar_manifest, keybags=a.privvar_keybags)
                 print(sh("diskutil", "unmount", data["device"]))
         sh("hdiutil", "detach", devs[0])
     except SystemExit:
@@ -324,8 +333,10 @@ def main():
         sys.exit("INJECT FAILED: the watchdogd key is not in the image; the volume write did not land")
     if a.factorydata_upper and not grown.count(b"factorydata"):
         sys.exit("INJECT FAILED: the BindFS upper tree is not in the image; the mkdir did not land")
-    if a.privvar_manifest and not grown.count(b"keybags"):
-        sys.exit("INJECT FAILED: keybags is not in the image; the /private/var tree did not land")
+    if a.privvar_keybags and not grown.count(b"keybags"):
+        sys.exit("INJECT FAILED: keybags was requested but is not in the image; the mkdir did not land")
+    if a.privvar_manifest and not grown.count(b"Keychains"):
+        sys.exit("INJECT FAILED: Keychains is not in the image; the /private/var tree did not land")
     out = pack(grown)
     pathlib.Path(a.dst).parent.mkdir(parents=True, exist_ok=True)
     pathlib.Path(a.dst).write_bytes(out)
