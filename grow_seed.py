@@ -164,6 +164,50 @@ def inject_factorydata_upper(mount):
 
 
 
+def inject_privvar_dirs(mount, manifest_path):
+    """Build the real /private/var directory tree on the Data volume from a '<mode> ./path' manifest.
+
+    l303 got as far as keybagd and stopped on a plain ENOENT: 'Could not open
+    /private/var/keybags/systembag.kb: No such file or directory' - the keybags directory itself is
+    absent, and so are most of the rest of the tree (our kernel skeleton only makes 33 dirs, and
+    d46a's 85-line manifest does not list keybags either). Directories only, no file contents.
+
+    Ownership follows the manifest's own intent: the ./mobile subtree belongs to the mobile user
+    (uid 501 on iOS), everything else is root:wheel, because launchd ignored a uid-501 disabled.plist
+    on board while the root-owned one worked.
+    """
+    entries = []
+    for raw_line in pathlib.Path(manifest_path).read_text(errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        mode, sep, rel = line.partition(" ")        # paths contain spaces: only the first field is the mode
+        if not sep or not rel.strip():
+            print(f"  skipping unparseable manifest line: {raw_line!r}")
+            continue
+        entries.append((mode, rel.strip()))
+    made = 0
+    for mode, rel in entries:
+        if not rel.startswith("./"):
+            print(f"  skipping unexpected manifest line: {mode} {rel}")
+            continue
+        target = mount / rel[2:]
+        target.mkdir(parents=True, exist_ok=True)
+        sh("sudo", "chmod", mode, str(target))
+        made += 1
+    print(f"parsed {len(entries)} manifest entries, {made} created at their recorded modes")
+    kb = mount / "keybags"
+    kb.mkdir(parents=True, exist_ok=True)
+    sh("sudo", "chmod", "700", str(kb))
+    made += 1
+    sh("sudo", "chown", "-R", "root:wheel", str(mount))
+    for p in mount.glob("mobile"):
+        sh("sudo", "chown", "-R", "501:staff", str(p))
+    print(f"created {made} /private/var directories from {manifest_path} "
+          f"(incl. keybags 700), mobile subtree -> 501:staff")
+    return made
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("src")
@@ -176,6 +220,8 @@ def main():
                     help="chown the injected launchd chain to root:wheel; launchd ignored a uid-501 copy on board")
     ap.add_argument("--factorydata-upper", action="store_true",
                     help="create the /var/hardware/FactoryData/... tree that BindFS reports as missing (error 2)")
+    ap.add_argument("--privvar-manifest", default=None,
+                    help="path to a '<mode> ./path' manifest of /private/var directories to create, plus keybags")
     a = ap.parse_args()
 
     blob = pathlib.Path(a.src).read_bytes()
@@ -227,7 +273,7 @@ def main():
             print("\n=== AFTER ===")
             after = apfs_view(devs)
             print(json.dumps(after, indent=2))
-            if a.disable_watchdogd or a.factorydata_upper:
+            if a.disable_watchdogd or a.factorydata_upper or a.privvar_manifest:
                 vols = [v for block in after for v in block["volumes"]]
                 if not vols:
                     sys.exit("the container reports no volumes; cannot inject")
@@ -240,6 +286,8 @@ def main():
                     inject_disable_watchdogd(mount, a.root_own)
                 if a.factorydata_upper:
                     inject_factorydata_upper(mount)
+                if a.privvar_manifest:
+                    inject_privvar_dirs(mount, a.privvar_manifest)
                 print(sh("diskutil", "unmount", data["device"]))
         sh("hdiutil", "detach", devs[0])
     except SystemExit:
@@ -258,6 +306,8 @@ def main():
         probes += [b"disabled.plist", b"disabled.migrated", b"com.apple.watchdogd"]
     if a.factorydata_upper:
         probes += [b"factorydata", b"FactoryData", b"hardware"]
+    if a.privvar_manifest:
+        probes += [b"keybags", b"Keychains", b"MobileAsset", b"wireless", b"prefs"]
     for probe in probes:
         # the APFS catalog keeps names as plain ASCII, so this is a real read-back of what landed on
         # the volume rather than a trust-the-tool claim. plistlib writes XML by default, so bplist00
@@ -267,6 +317,8 @@ def main():
         sys.exit("INJECT FAILED: the watchdogd key is not in the image; the volume write did not land")
     if a.factorydata_upper and not grown.count(b"factorydata"):
         sys.exit("INJECT FAILED: the BindFS upper tree is not in the image; the mkdir did not land")
+    if a.privvar_manifest and not grown.count(b"keybags"):
+        sys.exit("INJECT FAILED: keybags is not in the image; the /private/var tree did not land")
     out = pack(grown)
     pathlib.Path(a.dst).parent.mkdir(parents=True, exist_ok=True)
     pathlib.Path(a.dst).write_bytes(out)

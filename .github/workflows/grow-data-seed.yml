@@ -41,6 +41,14 @@ on:
         options:
           - "false"
           - "true"
+      privvar_dirs:
+        description: "create every /private/var directory from privvar-dirs.txt (82 entries) plus keybags 700"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 jobs:
   mac:
@@ -54,6 +62,7 @@ jobs:
           [ '${{ inputs.disable_watchdogd }}' = 'true' ] && f="$f --disable-watchdogd"
           [ '${{ inputs.root_own }}' = 'true' ] && f="$f --root-own"
           [ '${{ inputs.factorydata_upper }}' = 'true' ] && f="$f --factorydata-upper"
+          [ '${{ inputs.privvar_dirs }}' = 'true' ] && f="$f --privvar-manifest privvar-dirs.txt"
           echo "inject=$f" >> "$GITHUB_OUTPUT"
       - name: expand, read, grow, repack
         run: |
