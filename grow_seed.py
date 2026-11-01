@@ -152,14 +152,21 @@ def inject_factorydata_upper(mount):
     com.apple.factorydata failed error: 2' - the upper directory tree simply does not exist on our
     Data volume, so the System-volume overlay cannot be built. Creating it is the whole experiment:
     if that error becomes a mount success, we gain a writable view over /System and can fix job
-    plists (SpringBoard stderr) without any new kernel capability."""
-    rel = "var/hardware/FactoryData/System/Library/Caches/com.apple.factorydata"
+    plists (SpringBoard stderr) without any new kernel capability.
+
+    The path is relative to the DATA VOLUME ROOT, which the kernel mounts at /private/var. The first
+    version of this function used "var/hardware/...", which put the tree at /private/var/var/hardware
+    and left l304 failing with the identical error:2 line - the manifest d46a exported from the IPSW
+    is the authority on the depth and it says ./hardware.
+    """
+    rel = "hardware/FactoryData/System/Library/Caches/com.apple.factorydata"
     target = mount / rel
     target.mkdir(parents=True, exist_ok=True)
-    sh("sudo", "chown", "-R", "root:wheel", str(mount / "var"))
-    sh("sudo", "chmod", "755", *(str(p) for p in [mount / "var"] +
-                                 [mount / "/".join(rel.split("/")[:i]) for i in range(2, len(rel.split("/")))]))
-    print(f"created BindFS upper tree: /{rel}")
+    sh("sudo", "chown", "-R", "root:wheel", str(target))
+    parts = rel.split("/")
+    for i in range(1, len(parts) + 1):
+        sh("sudo", "chmod", "755", str(mount.joinpath(*parts[:i])))
+    print(f"created BindFS upper tree at the volume root: /private/var/{rel}")
     return target
 
 
