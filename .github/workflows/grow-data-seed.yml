@@ -66,7 +66,7 @@ jobs:
       - name: install the official APFS reader
         run: |
           sudo apt-get update
-          sudo apt-get install -y apfsprogs
+          sudo apt-get install -y apfsprogs libfsapfs-utils
       - name: unpack and identify
         run: python3 verify_seed.py out/*.dbr seed/*.dbrdisk
       - name: ask libfsapfs to read the grown container
@@ -76,7 +76,10 @@ jobs:
           for p in sorted(glob.glob("out/*.dbr")):
               blob = pathlib.Path(p).read_bytes()
               count = struct.unpack_from("<8sIIQQ", blob, 0)[4]
-              pathlib.Path("/tmp/img.img").write_bytes(blob[32 + 16 * count:])
-              print(p, "->", "/tmp/img.img")
+              body = blob[32 + 16 * count:]
+              pathlib.Path("/tmp/img.img").write_bytes(body)
+              print(p, "->", "/tmp/img.img", len(body), "B")
+              if b"com.apple.watchdogd" in body:
+                  print("  the injected disabled.plist key is present in the container bytes")
           PY
           fsapfsinfo /tmp/img.img
