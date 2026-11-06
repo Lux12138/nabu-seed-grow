@@ -17,8 +17,8 @@ jobs:
         run: |
           mkdir -p src/drivers/Adreno740/tests
           git -C src/drivers/Adreno740 fetch --depth 1 origin 6fa7bae2a5b3b523e790eb3e0348af4d98969e4d || true
-          git -C src/drivers/Adreno740 checkout 6fa7bae2a5b3b523e790eb3e0348af4d98969e4d || true
-          git -C src/drivers/Adreno740 show HEAD:tests/HostKernelHooks.cpp > src/drivers/Adreno740/tests/HostKernelHooks.cpp || true
+          git -C src/drivers/Adreno740 show 6fa7bae2a5b3b523e790eb3e0348af4d98969e4d:tests/XnuMemoryFixture.h > src/drivers/Adreno740/tests/XnuMemoryFixture.h || true
+          git -C src/drivers/Adreno740 show 6fa7bae2a5b3b523e790eb3e0348af4d98969e4d:tests/HostKernelHooks.cpp > src/drivers/Adreno740/tests/HostKernelHooks.cpp || true
           grep -n "boolean_t\|ppnum_t" src/drivers/Adreno740/tests/XnuMemoryFixture.h | head -3 || true
           wc -c src/drivers/Adreno740/tests/HostKernelHooks.cpp || true
           python3 - <<'PY'
