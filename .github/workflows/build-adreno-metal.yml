@@ -15,6 +15,10 @@ jobs:
           git -C src submodule update --init --recursive || true
       - name: ci tweaks
         run: |
+          mkdir -p src/drivers/Adreno740/tests
+          git -C src/drivers/Adreno740 fetch --depth 1 origin main || true
+          git -C src/drivers/Adreno740 show FETCH_HEAD:tests/HostKernelHooks.cpp > src/drivers/Adreno740/tests/HostKernelHooks.cpp || true
+          wc -c src/drivers/Adreno740/tests/HostKernelHooks.cpp || true
           python3 - <<'PY'
           from pathlib import Path
           p = Path('src/scripts/check-turnip-darwin-host.py')
