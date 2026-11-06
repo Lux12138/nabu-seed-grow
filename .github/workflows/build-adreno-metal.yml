@@ -16,22 +16,11 @@ jobs:
       - name: ci tweaks
         run: |
           mkdir -p src/drivers/Adreno740/tests
-          git -C src/drivers/Adreno740 fetch --depth 1 origin main || true
-          git -C src/drivers/Adreno740 show FETCH_HEAD:tests/HostKernelHooks.cpp > src/drivers/Adreno740/tests/HostKernelHooks.cpp || true
+          git -C src/drivers/Adreno740 fetch --depth 1 origin 6fa7bae2a5b3b523e790eb3e0348af4d98969e4d || true
+          git -C src/drivers/Adreno740 checkout 6fa7bae2a5b3b523e790eb3e0348af4d98969e4d || true
+          git -C src/drivers/Adreno740 show HEAD:tests/HostKernelHooks.cpp > src/drivers/Adreno740/tests/HostKernelHooks.cpp || true
+          grep -n "boolean_t\|ppnum_t" src/drivers/Adreno740/tests/XnuMemoryFixture.h | head -3 || true
           wc -c src/drivers/Adreno740/tests/HostKernelHooks.cpp || true
-          python3 - <<'PY'
-          from pathlib import Path
-          h = Path('src/drivers/Adreno740/tests/HostKernelHooks.cpp')
-          if h.is_file():
-              s = h.read_text()
-              if 'typedef unsigned int boolean_t;' not in s:
-                  s = s.replace('#include "XnuMemoryFixture.h"',
-                                '#include "XnuMemoryFixture.h"' + chr(10) +
-                                'typedef unsigned int boolean_t;' + chr(10) +
-                                'typedef unsigned int ppnum_t;', 1)
-                  h.write_text(s)
-              print('hooks types patched:', 'boolean_t' in s, 'ppnum_t' in s)
-          PY
           python3 - <<'PY'
           from pathlib import Path
           p = Path('src/scripts/check-turnip-darwin-host.py')
