@@ -12,8 +12,7 @@ jobs:
         run: |
           git clone https://github.com/UniXNU/UniXNU.git src
           git -C src checkout 066c8d8315f83749d28bcae2faf3595718646be5
-          git clone https://github.com/UniXNU/Adreno740.git src/drivers/Adreno740
-          git -C src/drivers/Adreno740 checkout 4e0314df8ad29d52f6fa3f9383a540adcd618b87
+          git -C src submodule update --init --recursive || true
       - name: toolchain
         run: |
           brew install glslang spirv-tools meson ninja bison flex || true
