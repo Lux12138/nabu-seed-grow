@@ -23,8 +23,6 @@ jobs:
           mkdir -p .cache
           git clone --filter=blob:none --no-checkout https://chromium.googlesource.com/external/gitlab.freedesktop.org/mesa/mesa .cache/mesa-work
           cd .cache/mesa-work
-          git sparse-checkout init --cone
-          git sparse-checkout set $(python3 -c "import json;d=json.load(open('../../scripts/data/adreno-compiler-inputs.json'));print(' '.join(d['mesa']['sparse_directories']))")
           git fetch --depth 1 origin 85fda3b36405bcaea8bffc64aa4f2651dc90770d
           git checkout 85fda3b36405bcaea8bffc64aa4f2651dc90770d
           cd ../..
