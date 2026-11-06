@@ -13,29 +13,28 @@ jobs:
           git clone https://github.com/UniXNU/UniXNU.git src
           git -C src checkout 066c8d8315f83749d28bcae2faf3595718646be5
           git -C src submodule update --init --recursive || true
-      - name: ci tweaks (host check link needs libproc on CI)
+      - name: ci tweaks
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('src/scripts/check-turnip-darwin-host.py'); t=p.read_text()
-          t=t.replace("'-framework', 'CoreFoundation']", "'-framework', 'CoreFoundation', '-lproc']")
-          anchor="shim_obj = out / 'host_iokit_shim.o'"
+          p = Path('src/scripts/check-turnip-darwin-host.py')
+          t = p.read_text()
+          t = t.replace("'-framework', 'CoreFoundation']", "'-framework', 'CoreFoundation', '-lproc']")
+          anchor = "shim_obj = out / 'host_iokit_shim.o'"
           if anchor in t and 'HostKernelHooks' not in t:
-              insert=anchor+"
-"+"hooks = out / 'HostKernelHooks.o'
-"+"subprocess.run(['xcrun', 'clang++', '-std=c++17', '-O1', '-fPIC', '-c', ROOT / 'drivers/Adreno740/tests/HostKernelHooks.cpp', '-o', hooks], check=True)
-"
-              t=t.replace(anchor, insert)
-              t=t.replace("shim, service, shim_obj, *core, *objects,", "shim, service, shim_obj, hooks, *core, *objects,")
+              cmd = "subprocess.run(['xcrun', 'clang++', '-std=c++17', '-O1', '-fPIC', '-c', ROOT / 'drivers/Adreno740/tests/HostKernelHooks.cpp', '-o', hooks], check=True)"
+              insert = anchor + chr(10) + "hooks = out / 'HostKernelHooks.o'" + chr(10) + cmd + chr(10)
+              t = t.replace(anchor, insert)
+              t = t.replace("shim, service, shim_obj, *core, *objects,", "shim, service, shim_obj, hooks, *core, *objects,")
           p.write_text(t)
-          print('host hooks + libproc added to host check')
+          print('host hooks + libproc added')
           PY
       - name: toolchain
         run: |
           brew install glslang shaderc spirv-tools meson ninja bison flex || true
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y || true
           . "$HOME/.cargo/env" 2>/dev/null || true
-          which glslangValidator meson ninja cargo || true
+          which glslangValidator glslc spirv-val meson ninja cargo || true
       - name: mesa source + patches + venv
         run: |
           set -euo pipefail
@@ -47,7 +46,8 @@ jobs:
           git checkout 85fda3b36405bcaea8bffc64aa4f2651dc90770d
           cd ../..
           for p in $(python3 -c "import json;print(' '.join(json.load(open('scripts/data/adreno-compiler-inputs.json'))['patches']))"); do
-            echo "apply $p"; git -C .cache/mesa-work apply "$PWD/$p" || patch -p1 -d .cache/mesa-work < "$PWD/$p"
+            echo "apply $p"
+            git -C .cache/mesa-work apply "$PWD/$p" || patch -p1 -d .cache/mesa-work < "$PWD/$p"
           done
           python3 -m venv .cache/mesa-venv
           .cache/mesa-venv/bin/pip install --quiet meson ninja mako pyyaml ply packaging setuptools
@@ -55,18 +55,16 @@ jobs:
         run: |
           . "$HOME/.cargo/env" 2>/dev/null || true
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/bin:$PATH"
-          bison --version | head -1
-          cd src && (python3 scripts/build-turnip-darwin.py --target ios || (tail -60 .cache/mesa-tu-ios-build.log; exit 1))
+          cd src && (python3 scripts/build-turnip-darwin.py --target ios || (tail -80 .cache/mesa-tu-ios-build.log; exit 1))
       - name: turnip-host
         run: |
           . "$HOME/.cargo/env" 2>/dev/null || true
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/bin:$PATH"
-          cd src && (python3 scripts/build-turnip-darwin.py --target host || (tail -60 .cache/mesa-tu-build.log; exit 1))
+          cd src && (python3 scripts/build-turnip-darwin.py --target host || (tail -80 .cache/mesa-tu-build.log; exit 1))
       - name: plugin
         run: |
           . "$HOME/.cargo/env" 2>/dev/null || true
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/bin:$PATH"
-          which glslc glslangValidator spirv-val || true
           cd src && python3 scripts/build-adreno-metal-plugin.py
       - uses: actions/upload-artifact@v4
         with:
