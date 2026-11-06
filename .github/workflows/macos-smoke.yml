@@ -1,0 +1,10 @@
+name: macos-smoke
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ping:
+    runs-on: macos-latest
+    steps:
+      - run: sw_vers && xcrun --sdk iphoneos --show-sdk-path
