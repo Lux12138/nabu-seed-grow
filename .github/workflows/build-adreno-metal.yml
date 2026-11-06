@@ -14,7 +14,7 @@ jobs:
           git -C src checkout 066c8d8315f83749d28bcae2faf3595718646be5
       - name: toolchain
         run: |
-          brew install glslang spirv-tools meson ninja || true
+          brew install glslang spirv-tools meson ninja bison flex || true
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y || true
           . "$HOME/.cargo/env" 2>/dev/null || true
           which glslangValidator meson ninja cargo || true
@@ -36,7 +36,9 @@ jobs:
       - name: turnip
         run: |
           . "$HOME/.cargo/env" 2>/dev/null || true
-          cd src && python3 scripts/build-turnip-darwin.py --target ios
+          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/bin:$PATH"
+          bison --version | head -1
+          cd src && (python3 scripts/build-turnip-darwin.py --target ios || (tail -60 .cache/mesa-tu-ios-build.log; exit 1))
       - name: plugin
         run: |
           . "$HOME/.cargo/env" 2>/dev/null || true
