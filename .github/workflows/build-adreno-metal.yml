@@ -15,7 +15,7 @@ jobs:
           git -C src submodule update --init --recursive || true
       - name: toolchain
         run: |
-          brew install glslang spirv-tools meson ninja bison flex || true
+          brew install glslang shaderc spirv-tools meson ninja bison flex || true
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y || true
           . "$HOME/.cargo/env" 2>/dev/null || true
           which glslangValidator meson ninja cargo || true
@@ -49,6 +49,7 @@ jobs:
         run: |
           . "$HOME/.cargo/env" 2>/dev/null || true
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/bin:$PATH"
+          which glslc glslangValidator spirv-val || true
           cd src && python3 scripts/build-adreno-metal-plugin.py
       - uses: actions/upload-artifact@v4
         with:
