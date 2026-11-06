@@ -41,9 +41,15 @@ jobs:
           export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/bin:$PATH"
           bison --version | head -1
           cd src && (python3 scripts/build-turnip-darwin.py --target ios || (tail -60 .cache/mesa-tu-ios-build.log; exit 1))
+      - name: turnip-host
+        run: |
+          . "$HOME/.cargo/env" 2>/dev/null || true
+          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/bin:$PATH"
+          cd src && (python3 scripts/build-turnip-darwin.py --target host || (tail -60 .cache/mesa-tu-build.log; exit 1))
       - name: plugin
         run: |
           . "$HOME/.cargo/env" 2>/dev/null || true
+          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/bin:$PATH"
           cd src && python3 scripts/build-adreno-metal-plugin.py
       - uses: actions/upload-artifact@v4
         with:
