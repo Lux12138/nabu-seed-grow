@@ -19,8 +19,16 @@ jobs:
           from pathlib import Path
           p=Path('src/scripts/check-turnip-darwin-host.py'); t=p.read_text()
           t=t.replace("'-framework', 'CoreFoundation']", "'-framework', 'CoreFoundation', '-lproc']")
+          anchor="shim_obj = out / 'host_iokit_shim.o'"
+          if anchor in t and 'HostKernelHooks' not in t:
+              insert=anchor+"
+"+"hooks = out / 'HostKernelHooks.o'
+"+"subprocess.run(['xcrun', 'clang++', '-std=c++17', '-O1', '-fPIC', '-c', ROOT / 'drivers/Adreno740/tests/HostKernelHooks.cpp', '-o', hooks], check=True)
+"
+              t=t.replace(anchor, insert)
+              t=t.replace("shim, service, shim_obj, *core, *objects,", "shim, service, shim_obj, hooks, *core, *objects,")
           p.write_text(t)
-          print('libproc link flag added')
+          print('host hooks + libproc added to host check')
           PY
       - name: toolchain
         run: |
