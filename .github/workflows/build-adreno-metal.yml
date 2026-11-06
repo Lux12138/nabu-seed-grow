@@ -1,0 +1,26 @@
+name: build-adreno-metal
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  plugin:
+    runs-on: macos-latest
+    timeout-minutes: 240
+    steps:
+      - name: checkout UniXNU
+        run: git clone --depth 1 https://github.com/UniXNU/UniXNU.git src
+      - name: toolchain
+        run: brew install glslang spirv-tools meson ninja || true; which glslc spirv-val meson ninja || true
+      - name: turnip
+        run: cd src && python3 scripts/build-turnip-darwin.py --target ios
+      - name: plugin
+        run: cd src && python3 scripts/build-adreno-metal-plugin.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adreno-metal
+          if-no-files-found: error
+          path: |
+            src/build/adreno-metal-plugin/NativeAdrenoMetal.bundle
+            src/build/mesa-tu-ios/src/freedreno/vulkan/libvulkan_freedreno.dylib
+            src/build/prime-list.txt
