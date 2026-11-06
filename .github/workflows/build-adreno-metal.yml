@@ -9,7 +9,9 @@ jobs:
     timeout-minutes: 300
     steps:
       - name: checkout UniXNU
-        run: git clone --depth 1 https://github.com/UniXNU/UniXNU.git src
+        run: |
+          git clone https://github.com/UniXNU/UniXNU.git src
+          git -C src checkout 066c8d8315f83749d28bcae2faf3595718646be5
       - name: toolchain
         run: |
           brew install glslang spirv-tools meson ninja || true
