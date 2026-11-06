@@ -13,6 +13,15 @@ jobs:
           git clone https://github.com/UniXNU/UniXNU.git src
           git -C src checkout 066c8d8315f83749d28bcae2faf3595718646be5
           git -C src submodule update --init --recursive || true
+      - name: ci tweaks (host check link needs libproc on CI)
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/scripts/check-turnip-darwin-host.py'); t=p.read_text()
+          t=t.replace("'-framework', 'CoreFoundation']", "'-framework', 'CoreFoundation', '-lproc']")
+          p.write_text(t)
+          print('libproc link flag added')
+          PY
       - name: toolchain
         run: |
           brew install glslang shaderc spirv-tools meson ninja bison flex || true
